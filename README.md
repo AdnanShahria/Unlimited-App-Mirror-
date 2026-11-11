@@ -1,118 +1,108 @@
-# Unlimited App Mirror — Multi-Account Clone Generator
+# App Mirror — Multi-Account & Workspace Cloner for Windows
 
-Run any number of accounts of an app side-by-side on Windows, each strictly isolated in its own folder with **zero connection** between their logins, cookies, cache, profiles, and downloads.
+Run unlimited, strictly isolated copies ("clones") of any app on Windows side-by-side. Every clone lives in its own root folder with **zero connection** between their logins, cookies, cache, local profiles, and downloads.
 
----
-
-## The Windows WhatsApp Reality Check
-
-On Windows 10/11, the native WhatsApp Desktop is a **UWP / MSIX Store package** (`5319275A.WhatsAppDesktop`). Windows sandboxes MSIX apps per Windows login, not per process:
-
-* They refuse environment variable redirection (`USERPROFILE`, `APPDATA`, `LOCALAPPDATA`).
-* Copying `WindowsApps` executables is blocked by OS ACLs.
-* They are hardcoded to a single user data container (`%LOCALAPPDATA%\Packages\5319275A.WhatsAppDesktop_...\LocalState`).
-
-### The Solution: Web Application Mode (`-Mode Web`, default)
-The cleanest, 100% reliable way to run unlimited isolated WhatsApp accounts on Windows is to launch **WhatsApp Web as standalone Chromium app windows** (`--app=https://web.whatsapp.com`), each pinned to its own `--user-data-dir` inside the clone's folder.
-
-* Looks and behaves like a standalone desktop app (dedicated window, taskbar icon, no URL bar, no browser tabs).
-* **Zero shared data**: completely isolated cookies, IndexedDB, local storage, cache, and session tokens.
-* **Per-clone downloads**: files saved from account X go directly into `all_datas_of_systemX\Downloads`.
-* Supports audio/video calls, desktop notifications, camera/microphone permissions.
+Designed for business, power users, and multi-account operators. **Self-contained, portable, and requires no administrator privileges.**
 
 ---
 
-## Quick Start (WhatsApp — 4 Accounts)
+## What Does "App Mirror" Do?
 
-### Option A: Double-click
-Double-click **`Clone-WhatsApp.bat`** and press **Enter** (defaults to 4 accounts).
+When you run multiple accounts of an app (like WhatsApp, Discord, Telegram, or Antigravity/VS Code) on Windows, the operating system normally forces them to share the same login session, cache, and `%APPDATA%` folders, resulting in repeated logins and logouts.
 
-### Option B: PowerShell
-```powershell
-# Creates 4 clones on Desktop: system1, system2, system3, system4
-.\New-AppClones.ps1 -Count 4
+**App Mirror** eliminates this by creating independent sandboxed directories for each account:
 
-# Or with custom names:
-.\New-AppClones.ps1 -Names system1,systemx,systemy,systemz
+```text
+C:\Users\<You>\Desktop\whatsapp_accounts\
+├── all_datas_of_system1\    <-- Account #1 (Own cookies, session, & Downloads)
+├── all_datas_of_system2\    <-- Account #2 (Own cookies, session, & Downloads)
+├── all_datas_of_system3\    <-- Account #3 (Own cookies, session, & Downloads)
+├── all_datas_of_system4\    <-- Account #4 (Own cookies, session, & Downloads)
+├── WhatsApp - Open All.lnk  <-- Opens all 4 accounts with one click
+├── WhatsApp - Close All.lnk <-- Safely closes only these accounts
+└── READ ME.txt              <-- Portable documentation
 ```
 
 ---
 
-## Folder Layout Created
+## Sharing With Friends & Team Members
 
-By default on your Desktop:
+**You only need to send a single file:**
+> 📁 **`App-Mirror.bat`**
 
-```
-C:\Users\<you>\Desktop\whatsapp_accounts\
-├── all_datas_of_system1\
-│   ├── BrowserProfile\       <- 100% isolated cookies, sessions, cache
-│   │   └── Default\Preferences (preconfigured: download folder pinned)
-│   ├── Downloads\            <- ALL downloads from account 1 land here
-│   └── Launch.cmd            <- Launches this single clone
-├── all_datas_of_system2\
-│   ├── BrowserProfile\
-│   ├── Downloads\
-│   └── Launch.cmd
-├── all_datas_of_systemx\
-│   └── ...
-├── WhatsApp - system1.lnk    <- Shortcuts to each clone
-├── WhatsApp - system2.lnk
-└── Launch-All.cmd            <- One click opens EVERY clone at once
-```
+* **100% Self-Contained:** Contains the wizard, the isolation engine, process manager, and shortcut generator inside one `.bat` file.
+* **No Dependencies:** Runs on standard Windows 10 & 11 using built-in PowerShell 5.1+. No Python, Node.js, or external runtimes required.
+* **No Admin Rights:** Operates entirely within standard user permissions.
+* **Non-Destructive:** Existing accounts and personal browser tabs are never touched or closed.
 
 ---
 
-## How to Log In
+## How to Use: Step-by-Step
 
-1. Open `WhatsApp - system1.lnk` (or run `all_datas_of_system1\Launch.cmd`).
-2. Scan the QR code with phone #1.
-3. Open `WhatsApp - system2.lnk`.
-4. Scan the QR code with phone #2.
-5. Repeat for system3, system4, etc.
+Double-click **`App-Mirror.bat`** to open the interactive terminal wizard:
 
-Because `--user-data-dir` points to each clone's own folder, **sessions persist across reboots**. You only scan once per account.
+### 1. Which App Do You Want to Clone?
+You can provide any of the following:
+* **App Name:** Type `whatsapp`, `telegram`, or `antigravity` to automatically detect your installed applications.
+* **Drag-and-Drop:** Drag any desktop `.exe` or shortcut (`.lnk`) directly into the terminal window.
+* **Folder Path:** Paste the path to any portable app folder.
+* **Website URL:** Paste any web app URL (e.g., `https://web.whatsapp.com` or `https://chatgpt.com`).
 
----
-
-## Other Apps (Telegram, Discord, Slack, etc.)
-
-The script also supports classic Win32 and Electron `.exe` apps via `-Mode Exe`:
-
-```powershell
-# Telegram Desktop (native multi-instance via -workdir)
-.\New-AppClones.ps1 -AppName Telegram -Mode Exe `
-    -ExePath "$env:APPDATA\Telegram Desktop\Telegram.exe" `
-    -ExeArgs '-workdir "%C%Home"' `
-    -Count 3
-
-# Slack / Discord / other Electron apps
-.\New-AppClones.ps1 -AppName Slack -Mode Exe `
-    -ExePath "$env:LOCALAPPDATA\slack\slack.exe" `
-    -ElectronUserDataDir `
-    -Count 2
-```
-
-In `Exe` mode, `Launch.cmd` isolates the process by redirecting:
-* `USERPROFILE` -> `<clone>\Home`
-* `APPDATA` -> `<clone>\Home\AppData\Roaming`
-* `LOCALAPPDATA` -> `<clone>\Home\AppData\Local`
-* `TEMP` / `TMP` -> `<clone>\Temp`
+> **Note on Microsoft Store (MSIX) Apps:**  
+> Windows Store apps (including native WhatsApp Desktop from the Store) are locked by Microsoft to a single account per Windows user. When App Mirror detects a Store app, it automatically switches to the app's official Web Application mode, giving you isolated, borderless native desktop windows with zero session cross-over.
 
 ---
 
-## Parameters
+### 2. "Installed" vs. "Not Installed" (Portable)
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `-Count` | int | `4` | Number of clones to generate (`system1..systemN`) |
-| `-Names` | string[] | — | Explicit clone names (e.g. `system1,systemx,systemy`) |
-| `-Root` | string | `<Desktop>\<app>_accounts` | Parent folder holding all clones |
-| `-AppName` | string | `WhatsApp` | App display name |
-| `-Prefix` | string | `system` | Name prefix when using `-Count` |
-| `-FolderPrefix` | string | `all_datas_of_` | Subfolder prefix |
-| `-Mode` | Web \| Exe | `Web` | `Web` (Chromium app window) or `Exe` (redirected env) |
-| `-Browser` | Auto \| Edge \| Chrome \| Brave | `Auto` | Browser engine for `Web` mode |
-| `-Url` | string | `https://web.whatsapp.com` | Web target URL |
-| `-DesktopShortcuts` | switch | `false` | Also drop shortcuts directly onto the Windows Desktop |
-| `-Launch` | switch | `false` | Launch all clones immediately after creation |
+When cloning desktop `.exe` applications, App Mirror asks:
 
+| Mode | What It Means | Disk Usage | Best For |
+| :--- | :--- | :--- | :--- |
+| **Installed** | Clones reuse your existing installed program files (`C:\Program Files\...`), but **redirect all user data, settings, sessions, and downloads** into each clone's separate folder. | Minimal (~5–50 MB per clone) | Standard installed programs, Antigravity IDE, VS Code, Discord, Slack. |
+| **Not Installed** | Useful for portable apps or apps not in your system directories. App Mirror **copies the entire program folder** into each clone directory so each clone is 100% standalone and portable. | Medium (App size × number of clones) | Portable software, standalone tools, or standalone utilities on a USB drive. |
+
+---
+
+### 3. Choose Clone Names & Count
+* **By Count:** Enter a number (e.g. `4`) and a base name (e.g. `system` or `account`) &rarr; Generates `all_datas_of_system1` through `all_datas_of_system4`.
+* **By Name:** Enter specific names separated by commas (e.g. `work, personal, support`).
+
+---
+
+### 4. Choose Storage & Shortcuts
+* **Destination:** Defaults to `Desktop\<app>_accounts`, or choose any custom drive/folder (e.g., `D:\MyAccounts`).
+* **Shortcuts:** Place launch shortcuts directly on your **Desktop**, inside the **Clones Folder**, in the **Start Menu**, or in a custom folder.
+
+---
+
+## Managing Existing Clones
+
+Launch **`App-Mirror.bat`** and select **`[2] Manage my clones`** to:
+1. **View Disk Usage:** Monitor real-time folder sizes (MB) for each account.
+2. **Check Running Status:** See which accounts are currently active.
+3. **Add More Clones:** Add `system5` without overwriting or logging out existing accounts.
+4. **Surgical Close (`Close All` / `Stop.cmd`):** Politely closes running clone processes without touching your regular browser windows or personal apps.
+5. **Delete Clones:** Safely delete an individual account's data or remove the entire library cleanly.
+
+---
+
+## Supported App Ecosystem
+
+* **Web & Communication Apps:** WhatsApp, Telegram Web, Discord, Slack, Microsoft Teams, Messenger, Instagram, ChatGPT, Spotify.
+* **Developer IDEs & Code Editors:** Google Antigravity IDE, Visual Studio Code, Cursor, Obsidian, Postman.
+* **Portable & Win32 Applications:** Telegram Desktop (`-workdir`), OBS Studio (`--portable`), Notepad++, VLC, FileZilla.
+
+---
+
+## Technical Architecture
+
+* **Isolated User Data Directories:** Chromium/Electron `--user-data-dir` partitioning isolates IndexedDB, local storage, WebSockets, and cookies.
+* **Environment Variable Redirection:** Diverts `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`, and `%TEMP%` dynamically inside each clone's runtime scope.
+* **Automated Preferences Seeding:** Downloads for each clone are pinned to `<clone>\Downloads` via injected JSON preferences.
+* **Process Lineage Filtering:** `Stop.cmd` queries Windows WMI (`Win32_Process`) using process path and command-line matching to terminate only instances originating from that clone folder.
+
+---
+
+## License
+MIT License. Free to use, modify, and distribute.

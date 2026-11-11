@@ -86,6 +86,8 @@ param(
     [string]$IconPath,
     [switch]$NoShortcuts,
     [switch]$DesktopShortcuts,
+    # Folder(s) to put the shortcuts in. Default: the clones root folder.
+    [string[]]$ShortcutDir,
     # Open all clones after creating them.
     [switch]$Launch
 )
@@ -127,6 +129,42 @@ function New-Shortcut([string]$Lnk, [string]$Target, [string]$Arguments, [string
     $s.Description = $Desc
     if ($Icon) { $s.IconLocation = $Icon }
     $s.Save()
+}
+
+function Write-Utf8Bom([string]$Path, [string]$Text) {
+    # Windows PowerShell 5.1 needs a BOM to read non-ASCII .ps1 files correctly.
+    [IO.File]::WriteAllText($Path, $Text, (New-Object Text.UTF8Encoding($true)))
+}
+
+function Get-StopScript([string]$MatchSuffix) {
+    # Stops ONLY processes whose command line / exe path contains the clone folder.
+    # Skips itself and its parent cmd.exe (their command lines contain the path too).
+    $suffix = $MatchSuffix -replace "'", "''"
+    @'
+# Closes only the processes that belong to these clones (matched by folder path).
+# Your normal browser / app windows are not touched.
+$match = $PSScriptRoot.TrimEnd('\') + '\' + '__SUFFIX__'
+$parent = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId
+function Get-Targets {
+    @(Get-CimInstance Win32_Process | Where-Object {
+        $_.ProcessId -ne $PID -and $_.ProcessId -ne $parent -and (
+            ($_.CommandLine -and $_.CommandLine.IndexOf($match, [StringComparison]::OrdinalIgnoreCase) -ge 0) -or
+            ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($match, [StringComparison]::OrdinalIgnoreCase)))
+    })
+}
+$targets = Get-Targets
+if (-not $targets.Count) { Write-Host "Nothing running under $match"; return }
+# Ask windows to close first so apps can save their data, then force what's left.
+foreach ($t in $targets) {
+    $p = Get-Process -Id $t.ProcessId -ErrorAction SilentlyContinue
+    if ($p -and $p.MainWindowHandle -ne [IntPtr]::Zero) { [void]$p.CloseMainWindow() }
+}
+$deadline = (Get-Date).AddSeconds(5)
+while ((Get-Date) -lt $deadline -and (Get-Targets).Count) { Start-Sleep -Milliseconds 300 }
+$left = Get-Targets
+foreach ($t in $left) { Stop-Process -Id $t.ProcessId -Force -ErrorAction SilentlyContinue }
+Write-Host ("Closed {0} process(es){1}." -f $targets.Count, $(if ($left.Count) { " ($($left.Count) force-killed)" } else { '' }))
+'@.Replace('__SUFFIX__', $suffix)
 }
 
 function New-Dir([string]$Path) {
@@ -238,22 +276,20 @@ foreach ($name in $Names) {
     $lines += 'endlocal'
     Write-Cmd (Join-Path $clone 'Launch.cmd') $lines
 
-    # Generate surgical Stop.cmd for this clone only
-    $stopCmd = @(
+    # Stop.cmd closes this clone only.
+    Write-Utf8Bom (Join-Path $clone 'Stop.ps1') (Get-StopScript '')
+    Write-Cmd (Join-Path $clone 'Stop.cmd') @(
         '@echo off',
-        'chcp 65001 >nul',
-        'setlocal',
-        'set "C=%~dp0"',
-        'powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -like (''*'' + $env:C + ''*'') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA 0 }"',
-        'endlocal'
+        'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Stop.ps1"'
     )
-    Write-Cmd (Join-Path $clone 'Stop.cmd') $stopCmd
 
     if (-not $NoShortcuts) {
         $lnkName = "$AppName - $name.lnk"
-        $targets = @(Join-Path $Root $lnkName)
+        $targets = @()
+        if ($ShortcutDir) { foreach ($d in $ShortcutDir) { New-Dir $d; $targets += Join-Path $d $lnkName } }
+        else { $targets += Join-Path $Root $lnkName }
         if ($DesktopShortcuts) { $targets += Join-Path ([Environment]::GetFolderPath('Desktop')) $lnkName }
-        foreach ($lnk in $targets) {
+        foreach ($lnk in ($targets | Select-Object -Unique)) {
             New-Shortcut $lnk "$env:ComSpec" "/c `"$(Join-Path $clone 'Launch.cmd')`"" $clone $IconPath "$AppName ($name) - isolated clone"
         }
     }
@@ -262,14 +298,12 @@ foreach ($name in $Names) {
     Write-Host ("  [{0}] {1}" -f $(if ($isNew) { 'new ' } else { 'kept' }), $clone) -ForegroundColor $(if ($isNew) { 'Green' } else { 'Yellow' })
 }
 
-# Launch-All.cmd opens every clone in the root (including ones made earlier).
-# Stop-All.cmd surgically stops all clones in this root without touching normal apps/browsers
+# Stop-All.cmd closes every clone in this root; normal apps/browsers are untouched.
+Write-Utf8Bom (Join-Path $Root 'Stop-All.ps1') (Get-StopScript $FolderPrefix)
 Write-Cmd (Join-Path $Root 'Stop-All.cmd') @(
     '@echo off',
-    'chcp 65001 >nul',
-    'echo Stopping all clones in: %~dp0',
-    'powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -like (''*'' + (Convert-Path ''%~dp0'') + ''*'') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA 0 }"',
-    'echo Done.'
+    'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Stop-All.ps1"',
+    'timeout /t 3 >nul'
 )
 
 Write-Cmd (Join-Path $Root 'Launch-All.cmd') @(
@@ -280,6 +314,13 @@ Write-Cmd (Join-Path $Root 'Launch-All.cmd') @(
 
 Write-Host "`nDone. $($created.Count) isolated clone(s). Open them with the shortcuts or Launch-All.cmd in:" -ForegroundColor Cyan
 Write-Host "  $Root"
+if (-not $NoShortcuts -and $ShortcutDir) {
+    foreach ($d in ($ShortcutDir | Select-Object -Unique)) {
+        New-Shortcut (Join-Path $d "$AppName - Launch All.lnk") "$env:ComSpec" "/c `"$(Join-Path $Root 'Launch-All.cmd')`"" $Root $IconPath "Open all $AppName clones"
+        New-Shortcut (Join-Path $d "$AppName - Stop All.lnk") "$env:ComSpec" "/c `"$(Join-Path $Root 'Stop-All.cmd')`"" $Root "$env:SystemRoot\System32\shell32.dll,27" "Close all $AppName clones"
+    }
+    Write-Host "Shortcuts: $(($ShortcutDir | Select-Object -Unique) -join ' | ')"
+}
 
 if ($Launch) {
     foreach ($c in $created) {
