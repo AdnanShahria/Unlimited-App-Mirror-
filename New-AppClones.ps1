@@ -287,6 +287,9 @@ foreach ($name in $Names) {
             'set "LOCALAPPDATA=%C%Home\AppData\Local"',
             'set "TEMP=%C%Temp"',
             'set "TMP=%C%Temp"',
+            'set "ELECTRON_RUN_AS_NODE="',
+            'set "VSCODE_IPC_HOOK="',
+            'set "VSCODE_PID="',
             "start `"`" /D `"$runDir`" `"$runExe`" $extra".TrimEnd()
         )
     }

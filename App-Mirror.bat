@@ -324,6 +324,7 @@ function Build-Clones($cfg, [string[]]$names) {
                 'set "HOMEDRIVE=%C:~0,2%"', 'set "HOMEPATH=%C:~2%Home"',
                 'set "APPDATA=%C%Home\AppData\Roaming"', 'set "LOCALAPPDATA=%C%Home\AppData\Local"',
                 'set "TEMP=%C%Temp"', 'set "TMP=%C%Temp"',
+                'set "ELECTRON_RUN_AS_NODE="', 'set "VSCODE_IPC_HOOK="', 'set "VSCODE_PID="',
                 ("start `"`" /D `"$runDir`" `"$runExe`" $($cfg.ExeArgs)").TrimEnd()
             )
             $lnkTarget = $env:ComSpec; $lnkArgs = "/c `"$(Join-Path $clone 'Launch.cmd')`""; $lnkStyle = 7
