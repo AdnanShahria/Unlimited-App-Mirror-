@@ -22,13 +22,14 @@ exit /b
 # ============================================================================
 $ErrorActionPreference = 'Stop'
 $AppTitle   = 'App Mirror'
-$AppVersion = '1.0.0'
+$AppVersion = 'v1.0.0'
 $DataDir    = Join-Path $env:LOCALAPPDATA 'AppMirror'
 $Libraries  = Join-Path $DataDir 'libraries.txt'     # list of clone folders created on this PC
 $LogFile    = Join-Path $DataDir 'app-mirror.log'
 $Manifest   = 'AppMirror.json'                        # settings file stored in every clone folder
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
-try { $Host.UI.RawUI.WindowTitle = "$AppTitle $AppVersion" } catch { }
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+try { $Host.UI.RawUI.WindowTitle = "$AppTitle $AppVersion — Multi-Account Profile Isolation" } catch { }
 
 # Store apps can't be cloned directly; these are their official web versions.
 $WebVersions = [ordered]@{
@@ -43,31 +44,39 @@ $WebVersions = [ordered]@{
 function Write-Log([string]$msg) {
     try { Add-Content -LiteralPath $LogFile -Value ("{0:yyyy-MM-dd HH:mm:ss}  {1}" -f (Get-Date), $msg) } catch { }
 }
-function Say([string]$t = '', [string]$c = 'Gray') { Write-Host $t -ForegroundColor $c }
-function Ok([string]$t)   { Write-Host "  [OK] $t" -ForegroundColor Green }
-function Warn([string]$t) { Write-Host "  [!]  $t" -ForegroundColor Yellow }
-function Fail([string]$t) { Write-Host "  [X]  $t" -ForegroundColor Red }
+
+function Say([string]$t = '', [string]$c = 'Gray') { Write-Host "     $t" -ForegroundColor $c }
+function Ok([string]$t)   { Write-Host '     ✔  [OK] ' -ForegroundColor Green -NoNewline; Write-Host $t -ForegroundColor White }
+function Warn([string]$t) { Write-Host '     ▲  [NOTICE] ' -ForegroundColor Yellow -NoNewline; Write-Host $t -ForegroundColor White }
+function Fail([string]$t) { Write-Host '     ✖  [ERROR] ' -ForegroundColor Red -NoNewline; Write-Host $t -ForegroundColor White }
+function Tip([string]$t)  { Write-Host '     ✦  [TIP] ' -ForegroundColor Magenta -NoNewline; Write-Host $t -ForegroundColor DarkCyan }
 
 function Show-Header([string]$sub = '') {
     Clear-Host
-    Say ''
-    Say '  ============================================================' DarkCyan
-    Say ("    {0}  {1}" -f $AppTitle.ToUpper(), $AppVersion) Cyan
-    Say '    Run several fully separate copies of any app' DarkGray
-    Say '  ============================================================' DarkCyan
-    if ($sub) { Say "    $sub" White; Say '  ------------------------------------------------------------' DarkCyan }
-    Say ''
+    Write-Host ''
+    Write-Host '  ╭──────────────────────────────────────────────────────────────────────────╮' -ForegroundColor DarkCyan
+    Write-Host '  │  ◆  A P P   M I R R O R                                          v1.0.0  │' -ForegroundColor Cyan
+    Write-Host '  │     Universal Multi-Account Workspace & Profile Isolation Engine         │' -ForegroundColor DarkGray
+    Write-Host '  ╰──────────────────────────────────────────────────────────────────────────╯' -ForegroundColor DarkCyan
+    if ($sub) {
+        Write-Host "     ▸ $($sub.ToUpper())" -ForegroundColor Yellow
+        Write-Host '  ────────────────────────────────────────────────────────────────────────────' -ForegroundColor DarkGray
+    }
+    Write-Host ''
 }
 
 function Step([int]$n, [int]$of, [string]$t) {
-    Say ''
-    Say ("  STEP {0}/{1}  {2}" -f $n, $of, $t) Cyan
-    Say ('  ' + ('-' * 58)) DarkCyan
+    Write-Host ''
+    Write-Host ("  ╭─ [ STEP {0} OF {1} ] ────────────────────────────────────────────────────────╮" -f $n, $of) -ForegroundColor DarkCyan
+    Write-Host ("  │  {0,-72}│" -f $t.ToUpper()) -ForegroundColor Cyan
+    Write-Host '  ╰──────────────────────────────────────────────────────────────────────────╯' -ForegroundColor DarkCyan
+    Write-Host ''
 }
 
 function Ask([string]$q, [string]$default = '') {
-    $prompt = if ($default) { "  $q [$default]" } else { "  $q" }
-    $a = Read-Host $prompt
+    $prompt = if ($default) { "     ❯ $q [$default] : " } else { "     ❯ $q : " }
+    Write-Host $prompt -ForegroundColor Cyan -NoNewline
+    $a = Read-Host
     if ([string]::IsNullOrWhiteSpace($a)) { return $default }
     return $a.Trim().Trim('"').Trim("'").Trim()        # drag-and-drop adds quotes
 }
@@ -75,7 +84,11 @@ function Ask([string]$q, [string]$default = '') {
 function Ask-YesNo([string]$q, [bool]$default) {
     $d = if ($default) { 'Y' } else { 'N' }
     while ($true) {
-        $a = Ask "$q (Y/N)" $d
+        $prompt = "     ❯ $q (Y/N) [$d] : "
+        Write-Host $prompt -ForegroundColor Cyan -NoNewline
+        $a = Read-Host
+        if ([string]::IsNullOrWhiteSpace($a)) { $a = $d }
+        $a = $a.Trim()
         if ($a -match '^(y|yes)$') { return $true }
         if ($a -match '^(n|no)$')  { return $false }
         Warn 'Please answer Y or N.'
@@ -83,21 +96,31 @@ function Ask-YesNo([string]$q, [bool]$default) {
 }
 
 function Ask-Choice([string]$q, [string[]]$opts, [int]$default = 1, [switch]$AllowBack) {
-    for ($i = 0; $i -lt $opts.Count; $i++) { Say ("   [{0}] {1}" -f ($i + 1), $opts[$i]) White }
-    if ($AllowBack) { Say '   [0] Back' DarkGray }
+    for ($i = 0; $i -lt $opts.Count; $i++) {
+        Write-Host ("     ▸ [{0}] " -f ($i + 1)) -ForegroundColor Cyan -NoNewline
+        Write-Host $opts[$i] -ForegroundColor White
+    }
+    if ($AllowBack) {
+        Write-Host '     ▸ [0] ' -ForegroundColor DarkGray -NoNewline
+        Write-Host 'Back' -ForegroundColor DarkGray
+    }
+    Write-Host ''
     while ($true) {
         $n = -1
-        $a = Ask $q "$default"
-        if ([int]::TryParse($a, [ref]$n)) {
+        $prompt = "     ❯ $q [$default] : "
+        Write-Host $prompt -ForegroundColor Cyan -NoNewline
+        $a = Read-Host
+        if ([string]::IsNullOrWhiteSpace($a)) { $a = "$default" }
+        if ([int]::TryParse($a.Trim(), [ref]$n)) {
             if ($n -ge 1 -and $n -le $opts.Count) { return $n }
             if ($AllowBack -and $n -eq 0) { return 0 }
         }
-        Warn "Type a number from $(if ($AllowBack) { 0 } else { 1 }) to $($opts.Count)."
+        Warn "Please enter a number from $(if ($AllowBack) { 0 } else { 1 }) to $($opts.Count)."
     }
 }
 
 function Ask-Folder([string]$q, [string]$default) {
-    Say '  Enter = use the suggestion, or paste a full path, or type B to browse.' DarkGray
+    Say 'Tip: Press Enter for suggested path, paste a path, or type B to browse folders.' DarkGray
     while ($true) {
         $a = Ask $q $default
         if ($a -match '^[Bb]$') {
@@ -109,11 +132,11 @@ function Ask-Folder([string]$q, [string]$default) {
         }
         $a = [Environment]::ExpandEnvironmentVariables($a)
         if ($a -match '^[A-Za-z]:\\' -or $a -match '^\\\\[^\\]+\\') { return [IO.Path]::GetFullPath($a).TrimEnd('\') }
-        Warn 'Please give a full path, for example  D:\whatsapp_accounts'
+        Warn 'Please enter a valid full path (e.g. D:\whatsapp_accounts).'
     }
 }
 
-function Pause-Key { Say ''; [void](Read-Host '  Press Enter to continue') }
+function Pause-Key { Write-Host ''; Write-Host '     ❯ Press Enter to continue...' -ForegroundColor DarkGray -NoNewline; [void](Read-Host); Write-Host '' }
 
 function Get-SafeName([string]$n) {
     $n = ($n -replace '[\\/:*?"<>|]', '').Trim().TrimEnd('.')
@@ -618,8 +641,9 @@ function Start-CreateWizard {
 
     # ------------------------------------------------------------- 6. confirm
     Step 6 $total 'Review Configuration & Confirm'
-    Say '  Please review your settings before App Mirror creates your clones:' White
-    Say '  --------------------------------------------------------------------------' DarkGray
+    Say 'Please review your multi-account deployment settings before provisioning:' DarkGray
+    Write-Host ''
+    Write-Host '  ╭─ CONFIGURATION SUMMARY ──────────────────────────────────────────────────╮' -ForegroundColor DarkCyan
     $rows = [ordered]@{ 'Application' = $cfg.AppName }
     if ($cfg.Mode -eq 'Web') { 
         $rows['App Type'] = "Web Application Window (Chromium isolated profiles)"
@@ -627,18 +651,23 @@ function Start-CreateWizard {
     }
     else {
         $rows['Executable'] = $cfg.ExePath
-        $rows['Storage Mode'] = $(if ($cfg.CopyApp) { 'Not Installed (Standalone - Program copied into each clone)' } else { 'Installed (Shared binary - Isolated data profiles)' })
+        $rows['Storage Mode'] = $(if ($cfg.CopyApp) { 'Not Installed (Standalone - Copied into each clone)' } else { 'Installed (Shared binary - Isolated data profiles)' })
         $rows['Architecture'] = $cfg.Kind
     }
-    $rows['Accounts/Clones'] = ($names | ForEach-Object { "$($cfg.FolderPrefix)$_" }) -join ', '
-    $rows['Clone Directory'] = $cfg.Root
-    $rows['Shortcuts'] = $(if ($cfg.ShortcutDirs.Count) { $cfg.ShortcutDirs -join " `n               " } else { 'None (Skipped)' })
+    $rows['Accounts'] = ($names | ForEach-Object { "$($cfg.FolderPrefix)$_" }) -join ', '
+    $rows['Storage Path'] = $cfg.Root
+    $rows['Shortcuts'] = $(if ($cfg.ShortcutDirs.Count) { $cfg.ShortcutDirs -join ' | ' } else { 'None (Skipped)' })
     
     foreach ($k in $rows.Keys) { 
-        Say ("  {0,-16}: {1}" -f $k, $rows[$k]) White 
+        Write-Host '  │  ' -ForegroundColor DarkCyan -NoNewline
+        Write-Host ("{0,-14}: " -f $k) -ForegroundColor Cyan -NoNewline
+        $val = "$($rows[$k])"
+        if ($val.Length -gt 54) { $val = $val.Substring(0, 51) + '...' }
+        Write-Host ("{0,-54}" -f $val) -ForegroundColor White -NoNewline
+        Write-Host ' │' -ForegroundColor DarkCyan
     }
-    Say '  --------------------------------------------------------------------------' DarkGray
-    Say ''
+    Write-Host '  ╰──────────────────────────────────────────────────────────────────────────╯' -ForegroundColor DarkCyan
+    Write-Host ''
     if (-not (Ask-YesNo 'Proceed and create these isolated clones now?' $true)) { 
         Warn 'Setup cancelled. No changes were made to your system.'; Pause-Key; return 
     }
