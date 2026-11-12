@@ -245,13 +245,31 @@ foreach ($name in $Names) {
         $exeDir = Split-Path $exeFull -Parent
         $exeName = Split-Path $exeFull -Leaf
         if ($CopyApp) {
-            $appCopy = Join-Path $clone 'App'
-            if (-not (Test-Path -LiteralPath (Join-Path $appCopy $exeName))) {
-                Write-Host "  copying program files -> $appCopy" -ForegroundColor DarkGray
-                New-Dir $appCopy
-                Copy-Item -Path (Join-Path $exeDir '*') -Destination $appCopy -Recurse -Force
+            $canSkipCopy = ($ExeArgs -and ($ExeArgs -match '--user-data-dir|-workdir')) -or $ElectronUserDataDir
+            if ($canSkipCopy) {
+                # Smart-skip: isolation flags handle everything, zero duplicate bytes needed
+                $runExe = $exeFull; $runDir = $exeDir
+                Write-Host "  smart-skip: using original binary (0 MB copied)" -ForegroundColor DarkGray
             }
-            $runExe = "%C%App\$exeName"; $runDir = '%C%App'
+            else {
+                $appCopy = Join-Path $clone 'App'
+                if (-not (Test-Path -LiteralPath $appCopy)) {
+                    $junctionOk = $false
+                    try {
+                        cmd /c "mklink /J `"$appCopy`" `"$exeDir`"" 2>&1 | Out-Null
+                        if (Test-Path -LiteralPath (Join-Path $appCopy $exeName)) { $junctionOk = $true }
+                    } catch {}
+                    if ($junctionOk) {
+                        Write-Host "  junction-linked program (0 MB used)" -ForegroundColor DarkGray
+                    }
+                    else {
+                        Write-Host "  copying program files -> $appCopy" -ForegroundColor DarkGray
+                        New-Dir $appCopy
+                        Copy-Item -Path (Join-Path $exeDir '*') -Destination $appCopy -Recurse -Force
+                    }
+                }
+                $runExe = "%C%App\$exeName"; $runDir = '%C%App'
+            }
         }
         else {
             $runExe = $exeFull; $runDir = $exeDir

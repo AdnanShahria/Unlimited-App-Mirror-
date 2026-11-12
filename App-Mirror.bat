@@ -288,13 +288,34 @@ function Build-Clones($cfg, [string[]]$names) {
             $exeDir = Split-Path $cfg.ExePath -Parent
             $exeName = Split-Path $cfg.ExePath -Leaf
             if ($cfg.CopyApp) {
-                $appCopy = Join-Path $clone 'App'
-                if (-not (Test-Path -LiteralPath (Join-Path $appCopy $exeName))) {
-                    Say "       copying program files for $name ..." DarkGray
-                    New-Dir $appCopy
-                    Copy-Item -Path (Join-Path $exeDir '*') -Destination $appCopy -Recurse -Force
+                $canSkipCopy = $cfg.ExeArgs -and ($cfg.ExeArgs -match '--user-data-dir|-workdir')
+                if ($canSkipCopy) {
+                    # ── Smart Skip: isolation flags handle all data separation ──
+                    # The program itself is read-only; --user-data-dir / -workdir
+                    # redirects ALL mutable state.  No copy needed = zero overhead.
+                    $runExe = $cfg.ExePath; $runDir = $exeDir; $lnkIcon = "$($cfg.ExePath),0"
+                    if ($isNew) { Say "       smart-skip: using original binary (0 MB copied)" DarkGray }
                 }
-                $runExe = "%C%App\$exeName"; $runDir = '%C%App'; $lnkIcon = "$(Join-Path $appCopy $exeName),0"
+                else {
+                    # ── Generic Win32 app: try NTFS junction, then fall back ──
+                    $appCopy = Join-Path $clone 'App'
+                    if (-not (Test-Path -LiteralPath $appCopy)) {
+                        $junctionOk = $false
+                        try {
+                            $jout = cmd /c "mklink /J `"$appCopy`" `"$exeDir`"" 2>&1
+                            if (Test-Path -LiteralPath (Join-Path $appCopy $exeName)) { $junctionOk = $true }
+                        } catch {}
+                        if ($junctionOk) {
+                            Say "       junction-linked program for $name (0 MB used)" DarkGray
+                        }
+                        else {
+                            Say "       copying program files for $name ..." DarkGray
+                            New-Dir $appCopy
+                            Copy-Item -Path (Join-Path $exeDir '*') -Destination $appCopy -Recurse -Force
+                        }
+                    }
+                    $runExe = "%C%App\$exeName"; $runDir = '%C%App'; $lnkIcon = "$(Join-Path $appCopy $exeName),0"
+                }
             }
             else { $runExe = $cfg.ExePath; $runDir = $exeDir; $lnkIcon = "$($cfg.ExePath),0" }
 
@@ -358,6 +379,15 @@ Deleting a copy's folder deletes that account's data on this PC.
 function Remove-Clone($cfg, [string]$name) {
     $clone = Join-Path $cfg.Root ($cfg.FolderPrefix + $name)
     [void](Stop-CloneProcesses ($clone.TrimEnd('\') + '\'))
+    # Safety: if App\ is an NTFS junction, remove the junction FIRST so that
+    # Remove-Item -Recurse doesn't follow through and delete the original program.
+    $appDir = Join-Path $clone 'App'
+    if (Test-Path -LiteralPath $appDir) {
+        $item = Get-Item -LiteralPath $appDir -Force
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            cmd /c "rmdir `"$appDir`"" 2>&1 | Out-Null
+        }
+    }
     if (Test-Path -LiteralPath $clone) { Remove-Item -LiteralPath $clone -Recurse -Force }
     foreach ($d in $cfg.ShortcutDirs) {
         $l = Join-Path $d "$($cfg.AppName) - $name.lnk"
@@ -508,11 +538,13 @@ function Start-CreateWizard {
         Say '      - Disk space: Saves gigabytes of storage! Uses only ~10-50 MB per clone.'
         Say '      - Updates: When the app updates, all clones automatically receive the update.'
         Say ''
-        Say '  [2] Not Installed (Portable / Standalone Copy)' Cyan
-        Say "      - What it does: Copies the entire program folder ($mb MB) into EACH clone folder."
-        Say '      - Disk space: Uses significantly more disk space (' + ($mb * 4) + ' MB for 4 clones).'
-        Say '      - Best for: Portable apps from a USB stick or apps you want to move between PCs'
-        Say '        as completely self-contained directories.'
+        Say '  [2] Not Installed (Portable / Standalone)' Cyan
+        Say '      - What it does: Makes each clone fully self-contained and independent.'
+        Say '      - Smart optimization: For apps with built-in isolation (VS Code, Electron,'
+        Say '        Telegram), App Mirror skips the copy entirely — ZERO extra disk usage!'
+        Say '      - For other apps: Uses NTFS junctions (zero-copy directory links) when'
+        Say "        possible, or full copy ($mb MB per clone) only as a last resort."
+        Say '      - Best for: Portable apps on USB, or maximum independence between clones.'
         Say ''
 
         $c = Ask-Choice 'Select Storage Mode' @(
@@ -522,7 +554,7 @@ function Start-CreateWizard {
 
         if ($c -eq 2) {
             $cfg.CopyApp = $true
-            Say "  -> Mode selected: Standalone copy (Each clone will duplicate $mb MB of files)." Yellow
+            Say '  -> Mode selected: Standalone (smart-skip or junction will be used when possible).' Yellow
         }
         else {
             Say '  -> Mode selected: Installed (Shared binary, strictly isolated account profiles).' Green
@@ -651,7 +683,16 @@ function Start-CreateWizard {
     }
     else {
         $rows['Executable'] = $cfg.ExePath
-        $rows['Storage Mode'] = $(if ($cfg.CopyApp) { 'Not Installed (Standalone - Copied into each clone)' } else { 'Installed (Shared binary - Isolated data profiles)' })
+        if ($cfg.CopyApp) {
+            $hasIsoFlags = $cfg.ExeArgs -and ($cfg.ExeArgs -match '--user-data-dir|-workdir')
+            if ($hasIsoFlags) {
+                $rows['Installed?'] = 'Not installed — smart-skip (0 MB copied, isolation via flags)'
+            } else {
+                $rows['Installed?'] = 'Not installed — NTFS junction or full copy'
+            }
+        } else {
+            $rows['Installed?'] = 'Installed — shared binary, isolated data profiles'
+        }
         $rows['Architecture'] = $cfg.Kind
     }
     $rows['Accounts'] = ($names | ForEach-Object { "$($cfg.FolderPrefix)$_" }) -join ', '

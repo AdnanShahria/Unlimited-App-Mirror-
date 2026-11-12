@@ -60,7 +60,7 @@ When cloning desktop `.exe` applications, App Mirror asks:
 | Mode | What It Means | Disk Usage | Best For |
 | :--- | :--- | :--- | :--- |
 | **Installed** | Clones reuse your existing installed program files (`C:\Program Files\...`), but **redirect all user data, settings, sessions, and downloads** into each clone's separate folder. | Minimal (~5–50 MB per clone) | Standard installed programs, Antigravity IDE, VS Code, Discord, Slack. |
-| **Not Installed** | Useful for portable apps or apps not in your system directories. App Mirror **copies the entire program folder** into each clone directory so each clone is 100% standalone and portable. | Medium (App size × number of clones) | Portable software, standalone tools, or standalone utilities on a USB drive. |
+| **Not Installed** | Designed for portable apps or independent setups. Features **smart optimizations**: for apps with built-in data isolation (VS Code, Antigravity, Electron, Telegram), duplicate copying is skipped (0 MB wasted); for generic apps, it creates zero-byte NTFS junction links or copies only when cross-volume. | Minimal to Zero overhead (smart-skip / junctions) | Portable apps, standalone tools, or moving accounts to a flash drive. |
 
 ---
 
