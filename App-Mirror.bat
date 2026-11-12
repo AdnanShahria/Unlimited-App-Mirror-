@@ -397,20 +397,21 @@ function Start-CreateWizard {
 
     # ---------------------------------------------------------- 1. which app
     Step 1 $total 'Which app do you want to clone?'
-    Say '  You can enter any of these:'
-    Say '    * the app''s name, to search the apps installed on this PC   e.g.  whatsapp'
-    Say '    * the app''s .exe or shortcut (.lnk) - drag it into this window'
-    Say '    * the app''s folder (for apps that are not installed)'
-    Say '    * a website address                                          e.g.  https://web.whatsapp.com'
+    Say '  Tell App Mirror which application you want to create multiple accounts for.' White
+    Say '  You can enter any of the following:' DarkGray
+    Say '    [1] App Name       : Type the name to search installed apps on this PC (e.g. whatsapp, antigravity)'
+    Say '    [2] Drag & Drop    : Drag any .exe or desktop shortcut (.lnk) directly into this window'
+    Say '    [3] Folder Path    : Enter the folder path of a portable (non-installed) app'
+    Say '    [4] Website URL    : Enter a website to create isolated app windows (e.g. https://web.whatsapp.com)'
     Say ''
     while (-not $cfg.Mode) {
-        $loc = Ask 'App'
+        $loc = Ask 'Enter app name, file path, or web URL'
         if (-not $loc) { continue }
         $loc = [Environment]::ExpandEnvironmentVariables($loc)
         $store = $false
 
         if ($loc -match '^https?://\S+$') {
-            $cfg.Mode = 'Web'; $cfg.Url = $loc; $cfg.Kind = 'Web app'
+            $cfg.Mode = 'Web'; $cfg.Url = $loc; $cfg.Kind = 'Web app window'
             $suggested = (([uri]$loc).Host -replace '^(www|web|app|open)\.', '' -split '\.')[0]
             if ($suggested) { $suggested = $suggested.Substring(0, 1).ToUpper() + $suggested.Substring(1) }
             break
@@ -426,12 +427,12 @@ function Start-CreateWizard {
             $loc = $picked
         }
         if (-not $store -and -not (Test-Path -LiteralPath $loc)) {
-            if ($loc -match '[\\/]') { Warn "Not found: $loc"; continue }
+            if ($loc -match '[\\/]') { Warn "Path not found: $loc"; continue }
             Say "  Searching installed apps for '$loc' ..." DarkGray
             $hits = @(Find-InstalledApp $loc)
-            if (-not $hits.Count) { Warn "No installed app matches '$loc'. Try another name, or drag the app's .exe here."; continue }
+            if (-not $hits.Count) { Warn "No installed app matches '$loc'. Try typing the full path to the .exe."; continue }
             $labels = $hits | ForEach-Object { if ($_.Store) { "$(Get-StoreAppName $_.Name)   (Microsoft Store app)" } else { "$($_.Name)   ($($_.Path))" } }
-            $pick = Ask-Choice 'Which one' $labels 1 -AllowBack
+            $pick = Ask-Choice 'Which app did you mean' $labels 1 -AllowBack
             if ($pick -eq 0) { continue }
             $h = $hits[$pick - 1]
             $loc = $h.Path; $store = $h.Store; $suggested = $(if ($h.Store) { Get-StoreAppName $h.Name } else { $h.Name })
@@ -439,18 +440,21 @@ function Start-CreateWizard {
         if ($store -or $loc -like '*\WindowsApps\*') {
             if (-not $suggested) { $suggested = Get-StoreAppName (Split-Path $loc -Leaf) }
             Say ''
-            Warn 'This is a Microsoft Store app. Windows allows only one account of a Store app'
-            Say  '       per Windows user, so it cannot be copied directly. Instead, every clone will' Yellow
-            Say  '       run the app''s official WEB version in its own separate window, with its own' Yellow
-            Say  '       login, cookies and Downloads folder.' Yellow
-            $url = Ask 'Web address (Enter to accept)' (Get-WebVersion $suggested.ToLower())
-            if ($url -notmatch '^https?://') { Warn 'Please enter a web address starting with https://'; continue }
-            $cfg.Mode = 'Web'; $cfg.Url = $url; $cfg.Kind = 'Web version of a Store app'; break
+            Warn "Notice: '$suggested' is a Microsoft Store (UWP/MSIX) application."
+            Say  '  Why this matters:' Yellow
+            Say  '  Windows locks Store apps to a single Windows account and blocks copying their program' Yellow
+            Say  '  files. To give you 100% separate accounts, App Mirror will launch the official WEB' Yellow
+            Say  '  version as dedicated, borderless desktop app windows. Each clone has its own completely' Yellow
+            Say  '  isolated login, cookies, cache, and Downloads folder (no shared session).' Yellow
+            Say ''
+            $url = Ask 'Web URL to use for this app (Enter to accept default)' (Get-WebVersion $suggested.ToLower())
+            if ($url -notmatch '^https?://') { Warn 'Please enter a valid web address starting with https://'; continue }
+            $cfg.Mode = 'Web'; $cfg.Url = $url; $cfg.Kind = 'Web Application Window (Isolated profiles)'; break
         }
-        if ($loc -notlike '*.exe') { Warn 'Please give a .exe, a shortcut, a folder, an app name or a web address.'; continue }
+        if ($loc -notlike '*.exe') { Warn 'Please provide a valid .exe, .lnk shortcut, app folder, or web URL.'; continue }
         if ((Split-Path $loc -Leaf) -match '(setup|install|installer)[^\\]*\.exe$') {
-            Warn 'That looks like an INSTALLER, not the app itself.'
-            Say  '       Install the app first, or use the folder of the portable (not installed) version.' Yellow
+            Warn 'The selected file appears to be an INSTALLER, not the installed application.'
+            Say  '  Please point to the actual application .exe or install the software first.' Yellow
             continue
         }
         $cfg.Mode = 'Exe'; $cfg.ExePath = [IO.Path]::GetFullPath($loc)
@@ -458,112 +462,154 @@ function Start-CreateWizard {
         $suggested = @($suggested, $vi.ProductName, $vi.FileDescription, [IO.Path]::GetFileNameWithoutExtension($cfg.ExePath)) |
             Where-Object { $_ -and $_.Trim() } | Select-Object -First 1
     }
-    if ($cfg.Mode -eq 'Web') { Ok "Web app: $($cfg.Url)" } else { Ok "Program: $($cfg.ExePath)" }
+    if ($cfg.Mode -eq 'Web') { Ok "Target: $($cfg.Url)" } else { Ok "Program Executable: $($cfg.ExePath)" }
 
     # ------------------------------------------------- 2. installed or not
-    Step 2 $total 'Is the app installed, or not installed?'
+    Step 2 $total 'Storage Mode: Installed vs. Not Installed'
     if ($cfg.Mode -eq 'Web') {
-        Say '  Web apps need no installation - each clone is its own app window. Skipping.' DarkGray
+        Say '  Web application: Each clone runs in an independent Chromium container.' White
+        Say '  No local program installation needed. Skipping to Step 3.' DarkGray
     }
     else {
         $exeDir = Split-Path $cfg.ExePath -Parent
         $looksInstalled = ($cfg.ExePath -like "$env:ProgramFiles\*") -or ($cfg.ExePath -like "${env:ProgramFiles(x86)}\*") -or
                           ($cfg.ExePath -like "$env:LOCALAPPDATA\*") -or ($cfg.ExePath -like "$env:APPDATA\*")
-        $c = Ask-Choice 'Choose' @(
-            'Installed      - all clones use this one installed program; only their DATA is separate',
-            'Not installed  - a portable app/folder: the program is COPIED into every clone'
+        $mb = Get-FolderSizeMB $exeDir
+
+        Say '  How should the program files be handled for each clone?' White
+        Say ''
+        Say '  [1] Installed (RECOMMENDED)' Cyan
+        Say '      - What it does: All clones launch from your single existing program installation.'
+        Say '      - Data isolation: Every clone gets its OWN separate folder for logins, chats, brain'
+        Say '        data, settings, and downloads (%USERPROFILE%, %APPDATA%, and --user-data-dir).'
+        Say '      - Disk space: Saves gigabytes of storage! Uses only ~10-50 MB per clone.'
+        Say '      - Updates: When the app updates, all clones automatically receive the update.'
+        Say ''
+        Say '  [2] Not Installed (Portable / Standalone Copy)' Cyan
+        Say "      - What it does: Copies the entire program folder ($mb MB) into EACH clone folder."
+        Say '      - Disk space: Uses significantly more disk space (' + ($mb * 4) + ' MB for 4 clones).'
+        Say '      - Best for: Portable apps from a USB stick or apps you want to move between PCs'
+        Say '        as completely self-contained directories.'
+        Say ''
+
+        $c = Ask-Choice 'Select Storage Mode' @(
+            'Installed      - Share program files, isolate all accounts/data (Recommended, saves disk space)',
+            'Not installed  - Duplicate program folder into each clone (Standalone, uses more disk space)'
         ) $(if ($looksInstalled) { 1 } else { 2 })
+
         if ($c -eq 2) {
             $cfg.CopyApp = $true
-            $mb = Get-FolderSizeMB $exeDir
-            Say "  Every clone gets its own copy of: $exeDir  (about $mb MB each)" DarkGray
+            Say "  -> Mode selected: Standalone copy (Each clone will duplicate $mb MB of files)." Yellow
         }
+        else {
+            Say '  -> Mode selected: Installed (Shared binary, strictly isolated account profiles).' Green
+        }
+
+        # Detect specific environment flags
         $res = Join-Path $exeDir 'resources'
         if (Test-Path -LiteralPath (Join-Path $res 'app\product.json')) {
-            $cfg.Kind = 'Code editor (VS Code family, e.g. Antigravity / VS Code / Cursor)'
+            $cfg.Kind = 'Code editor (VS Code / Antigravity / Cursor family)'
             $cfg.ExeArgs = '--user-data-dir="%C%Data" --extensions-dir="%C%Extensions"'
         }
         elseif ((Test-Path -LiteralPath (Join-Path $res 'app.asar')) -or (Test-Path -LiteralPath (Join-Path $res 'app'))) {
-            $cfg.Kind = 'Electron app'
+            $cfg.Kind = 'Electron framework application'
             $cfg.ExeArgs = '--user-data-dir="%C%Data"'
         }
         elseif ((Split-Path $cfg.ExePath -Leaf) -ieq 'Telegram.exe') {
             $cfg.Kind = 'Telegram Desktop'
             $cfg.ExeArgs = '-workdir "%C%Home"'
         }
-        else { $cfg.Kind = 'Standard Windows app' }
-        Ok "Detected: $($cfg.Kind)"
-        if ($cfg.Kind -eq 'Standard Windows app') {
-            Warn 'Standard apps are separated by giving each clone its own user folders.'
-            Say  '       Most apps work this way, but a few keep data in the Windows registry and' Yellow
-            Say  '       would still share it. Test with 2 clones before creating many.' Yellow
+        else { $cfg.Kind = 'Standard Win32 executable' }
+        Say ''
+        Ok "Environment architecture detected: $($cfg.Kind)"
+        if ($cfg.Kind -eq 'Standard Win32 executable') {
+            Warn 'Standard apps are isolated by redirecting %USERPROFILE%, %APPDATA%, and %TEMP%.'
+            Say  '  Most apps isolate cleanly. Some legacy software stores credentials in the Windows' Yellow
+            Say  '  registry and may still share logins. Test with 2 accounts first.' Yellow
         }
     }
 
     # -------------------------------------------------------------- 3. names
-    Step 3 $total 'Names'
+    Step 3 $total 'Clone Naming & Account Count'
+    Say '  Configure the display name and how many isolated accounts to create.' White
+    Say ''
     while (-not $cfg.AppName) {
-        $cfg.AppName = Get-SafeName (Ask 'App name (used for folders and shortcuts)' (Get-SafeName $suggested))
-        if (-not $cfg.AppName) { Warn 'Please enter a name.' }
+        $cfg.AppName = Get-SafeName (Ask 'App display name (used for shortcuts and folder names)' (Get-SafeName $suggested))
+        if (-not $cfg.AppName) { Warn 'Please enter a valid application name.' }
     }
-    Say '  How many clones? Type a number, or type your own names separated by commas.'
-    Say '  Examples:  4      or      system1,systemx,systemy' DarkGray
+    Say ''
+    Say '  How would you like to create and name your clones?' DarkGray
+    Say '    * By Count : Enter a number (e.g. 4) to create system1, system2, system3, system4'
+    Say '    * By Name  : Enter comma-separated custom names (e.g. work, personal, trading, client2)'
+    Say ''
     $names = @()
     while (-not $names.Count) {
-        $a = Ask 'Clones' '4'
+        $a = Ask 'Enter number of clones OR comma-separated names' '4'
         if ($a -match '^\d+$') {
             $n = [int]$a
-            if ($n -lt 1 -or $n -gt 100) { Warn 'Choose between 1 and 100.'; continue }
-            $base = Get-SafeName (Ask 'Base name (clones become <base>1, <base>2 ...)' 'system')
+            if ($n -lt 1 -or $n -gt 100) { Warn 'Please choose a number between 1 and 100.'; continue }
+            $base = Get-SafeName (Ask 'Base name prefix for numbered clones' 'system')
             if (-not $base) { $base = 'system' }
             $cfg.BaseName = $base
             $names = @(1..$n | ForEach-Object { "$base$_" })
         }
         else {
             $names = @($a -split ',' | ForEach-Object { Get-SafeName $_ } | Where-Object { $_ } | Select-Object -Unique)
-            if (-not $names.Count) { Warn 'Those names are not valid folder names.' }
+            if (-not $names.Count) { Warn 'Please enter valid folder names without special characters.' }
         }
     }
-    $cfg.FolderPrefix = (Ask 'Folder name start (each clone folder = <this><name>)' 'all_datas_of_') -replace '[\\/:*?"<>|]', ''
+    Say ''
+    Say '  Folder naming: each clone will be placed inside its own folder starting with this prefix.' DarkGray
+    $cfg.FolderPrefix = (Ask 'Folder prefix' 'all_datas_of_') -replace '[\\/:*?"<>|]', ''
+    $secondExample = if ($names.Count -gt 1) { $names[1] } else { '...' }
+    Say "  -> Resulting clone folders: $($cfg.FolderPrefix)$($names[0]), $($cfg.FolderPrefix)$secondExample" DarkCyan
 
     # ------------------------------------------------------------ 4. location
-    Step 4 $total 'Where should the clones be stored?'
+    Step 4 $total 'Storage Destination'
+    Say '  Where should all the isolated clone accounts be stored on this computer?' White
+    Say '  Every account gets its own self-contained folder inside this parent directory.' DarkGray
+    Say ''
     $defRoot = Join-Path ([Environment]::GetFolderPath('Desktop')) ((($cfg.AppName -replace '[^\w\-]', '_').ToLower()) + '_accounts')
-    $cfg.Root = Ask-Folder 'Clones folder' $defRoot
+    $cfg.Root = Ask-Folder 'Select destination root directory' $defRoot
     if (Test-Path -LiteralPath (Join-Path $cfg.Root $Manifest)) {
         $old = Read-Library $cfg.Root
-        Warn "This folder already holds $($old.AppName) clones ($($old.Clones -join ', '))."
-        Say  '       Existing clones are kept; new ones are added next to them.' Yellow
+        Say ''
+        Warn "This directory already contains $($old.AppName) clones ($($old.Clones -join ', '))."
+        Say  '  Existing account data will be safely kept. New clones will be added alongside them.' Yellow
         $cfg.Clones = $old.Clones; $cfg.Created = $old.Created
     }
     $drive = [IO.Path]::GetPathRoot($cfg.Root)
     try {
         $free = [math]::Round((New-Object IO.DriveInfo($drive)).AvailableFreeSpace / 1GB, 1)
-        Say "  Free space on $drive : $free GB" DarkGray
+        Say "  Available disk space on drive $drive : $free GB free" DarkGray
     } catch { }
 
     # ----------------------------------------------------------- 5. shortcuts
-    Step 5 $total 'Where should the shortcuts go?'
+    Step 5 $total 'Shortcut Placement'
+    Say '  Where would you like to place one-click launch shortcuts?' White
+    Say '  App Mirror creates a shortcut for each individual account, plus "Open All" and "Close All" controls.' DarkGray
+    Say ''
     $desktop = [Environment]::GetFolderPath('Desktop')
     $startMenu = Join-Path ([Environment]::GetFolderPath('Programs')) "$($cfg.AppName) clones"
-    Say '   [1] Desktop' White
-    Say '   [2] Inside the clones folder' White
-    Say "   [3] Start Menu  (folder `"$($cfg.AppName) clones`")" White
-    Say '   [4] A folder I choose' White
-    Say '   [5] No shortcuts' White
-    Say '  You can pick more than one, e.g.  1,2' DarkGray
+    Say '   [1] Windows Desktop                 - Quick access directly from your desktop' White
+    Say '   [2] Inside the Clones Directory     - Keeps your desktop clean; shortcuts sit next to the data' White
+    Say "   [3] Windows Start Menu              - Adds a folder named `"$($cfg.AppName) clones`" to Start" White
+    Say '   [4] Custom Directory                - Choose any custom folder' White
+    Say '   [5] Do Not Create Shortcuts         - No shortcuts will be generated' White
+    Say ''
+    Say '  Tip: You can select multiple locations by separating with commas (e.g. 1,2)' DarkGray
     $dirs = @()
     while ($true) {
-        $sel = @((Ask 'Choice' '1,2') -split '[,\s]+' | Where-Object { $_ })
+        $sel = @((Ask 'Enter shortcut location choice(s)' '1,2') -split '[,\s]+' | Where-Object { $_ })
         if ($sel -contains '5') { $dirs = @(); break }
         $bad = @($sel | Where-Object { $_ -notmatch '^[1-4]$' })
-        if ($bad.Count -or -not $sel.Count) { Warn 'Use numbers 1 to 5, separated by commas.'; continue }
+        if ($bad.Count -or -not $sel.Count) { Warn 'Please enter numbers from 1 to 5, separated by commas.'; continue }
         foreach ($s in $sel) {
             switch ($s) {
                 '1' { $dirs += $desktop }
                 '2' { $dirs += $cfg.Root }
                 '3' { $dirs += $startMenu }
-                '4' { $dirs += Ask-Folder 'Shortcut folder' (Join-Path $desktop "$($cfg.AppName) shortcuts") }
+                '4' { $dirs += Ask-Folder 'Enter custom shortcut folder' (Join-Path $desktop "$($cfg.AppName) shortcuts") }
             }
         }
         break
@@ -571,29 +617,47 @@ function Start-CreateWizard {
     $cfg.ShortcutDirs = @($dirs | Select-Object -Unique)
 
     # ------------------------------------------------------------- 6. confirm
-    Step 6 $total 'Check and confirm'
-    $rows = [ordered]@{ 'App' = $cfg.AppName }
-    if ($cfg.Mode -eq 'Web') { $rows['Type'] = "Web app window - $($cfg.Url)" }
-    else {
-        $rows['Program'] = $cfg.ExePath
-        $rows['Installed?'] = $(if ($cfg.CopyApp) { 'Not installed - program copied into each clone' } else { 'Installed - shared program, separate data' })
-        $rows['App type'] = $cfg.Kind
+    Step 6 $total 'Review Configuration & Confirm'
+    Say '  Please review your settings before App Mirror creates your clones:' White
+    Say '  --------------------------------------------------------------------------' DarkGray
+    $rows = [ordered]@{ 'Application' = $cfg.AppName }
+    if ($cfg.Mode -eq 'Web') { 
+        $rows['App Type'] = "Web Application Window (Chromium isolated profiles)"
+        $rows['Web Target'] = $cfg.Url
     }
-    $rows['Clones'] = ($names | ForEach-Object { "$($cfg.FolderPrefix)$_" }) -join ', '
-    $rows['Stored in'] = $cfg.Root
-    $rows['Shortcuts'] = $(if ($cfg.ShortcutDirs.Count) { $cfg.ShortcutDirs -join '  |  ' } else { 'none' })
-    foreach ($k in $rows.Keys) { Say ("  {0,-11}: {1}" -f $k, $rows[$k]) White }
+    else {
+        $rows['Executable'] = $cfg.ExePath
+        $rows['Storage Mode'] = $(if ($cfg.CopyApp) { 'Not Installed (Standalone - Program copied into each clone)' } else { 'Installed (Shared binary - Isolated data profiles)' })
+        $rows['Architecture'] = $cfg.Kind
+    }
+    $rows['Accounts/Clones'] = ($names | ForEach-Object { "$($cfg.FolderPrefix)$_" }) -join ', '
+    $rows['Clone Directory'] = $cfg.Root
+    $rows['Shortcuts'] = $(if ($cfg.ShortcutDirs.Count) { $cfg.ShortcutDirs -join " `n               " } else { 'None (Skipped)' })
+    
+    foreach ($k in $rows.Keys) { 
+        Say ("  {0,-16}: {1}" -f $k, $rows[$k]) White 
+    }
+    Say '  --------------------------------------------------------------------------' DarkGray
     Say ''
-    if (-not (Ask-YesNo 'Create now?' $true)) { Warn 'Cancelled - nothing was changed.'; Pause-Key; return }
+    if (-not (Ask-YesNo 'Proceed and create these isolated clones now?' $true)) { 
+        Warn 'Setup cancelled. No changes were made to your system.'; Pause-Key; return 
+    }
 
     Say ''
     $made = Build-Clones $cfg $names
     Say ''
-    Ok "$made new clone(s) ready in $($cfg.Root)"
-    if ($cfg.Mode -eq 'Web') { Say '  First time you open each clone, log in (e.g. scan the WhatsApp QR code with that phone).' DarkGray }
+    Ok "Successfully provisioned $made new clone(s) in: $($cfg.Root)"
+    if ($cfg.Mode -eq 'Web') { 
+        Say '  Quick Start: Open each clone once and log in (e.g. scan the WhatsApp QR code with your phone).' DarkCyan 
+        Say '  Because profiles are isolated, each account will stay logged in permanently.' DarkCyan
+    }
     Say ''
-    if (Ask-YesNo 'Open all clones now?' $false) { Start-Process -FilePath $env:ComSpec -ArgumentList "/c `"$(Join-Path $cfg.Root 'Launch-All.cmd')`"" -WindowStyle Hidden }
-    if (Ask-YesNo 'Show the clones folder?' $true) { Start-Process explorer.exe -ArgumentList "`"$($cfg.Root)`"" }
+    if (Ask-YesNo 'Would you like to open all clones right now?' $false) { 
+        Start-Process -FilePath $env:ComSpec -ArgumentList "/c `"$(Join-Path $cfg.Root 'Launch-All.cmd')`"" -WindowStyle Hidden 
+    }
+    if (Ask-YesNo 'Open the clones folder in File Explorer?' $true) { 
+        Start-Process explorer.exe -ArgumentList "`"$($cfg.Root)`"" 
+    }
 }
 
 # ============================================================ manage flow ==
