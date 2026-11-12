@@ -687,29 +687,41 @@ function Start-LibraryMenu([string]$root) {
         $cfg = Read-Library $root
         Show-Header "$($cfg.AppName)  -  $root"
         $running = Get-RunningClones $cfg.Root $cfg.FolderPrefix
-        if (-not $cfg.Clones.Count) { Say '  (no clones)' DarkGray }
+        Say '  Current Accounts & Storage Footprint:' DarkCyan
+        if (-not $cfg.Clones.Count) { Say '  (No accounts currently provisioned)' DarkGray }
         foreach ($n in $cfg.Clones) {
-            $state = if ($running.ContainsKey(("$n").ToLower())) { 'running' } else { '' }
+            $isRun = $running.ContainsKey(("$n").ToLower())
+            $state = if ($isRun) { '[RUNNING]' } else { '[IDLE]' }
             $size = Get-FolderSizeMB (Join-Path $cfg.Root ($cfg.FolderPrefix + $n))
-            Say ("   * {0,-28} {1,7} MB   {2}" -f "$($cfg.FolderPrefix)$n", $size, $state) $(if ($state) { 'Green' } else { 'White' })
+            Say ("   * {0,-28} {1,7} MB   {2}" -f "$($cfg.FolderPrefix)$n", $size, $state) $(if ($isRun) { 'Green' } else { 'White' })
         }
         Say ''
-        $a = Ask-Choice 'Action' @('Open all', 'Open one', 'Close all', 'Add more clones', 'Remove a clone', 'Show folder', 'Remove ALL these clones') 1 -AllowBack
+        Say '  What would you like to do with these accounts?' DarkGray
+        $actions = @(
+            'Launch All Clones       - Open all account windows simultaneously',
+            'Launch Single Clone     - Choose and launch one specific account',
+            'Stop All Clones         - Safely close running clone windows (personal apps untouched)',
+            'Add More Clones         - Add new accounts without touching existing logins',
+            'Remove Single Clone     - Permanently delete one specific account folder and shortcut',
+            'Open in File Explorer   - Open the clones directory on your computer',
+            'Delete Entire Library   - Permanently remove all clones and shortcuts for this app'
+        )
+        $a = Ask-Choice 'Select Action' $actions 1 -AllowBack
         switch ($a) {
             0 { return }
-            1 { Start-Process -FilePath $env:ComSpec -ArgumentList "/c `"$(Join-Path $cfg.Root 'Launch-All.cmd')`"" -WindowStyle Hidden; Ok 'Opening...'; Start-Sleep 1 }
+            1 { Start-Process -FilePath $env:ComSpec -ArgumentList "/c `"$(Join-Path $cfg.Root 'Launch-All.cmd')`"" -WindowStyle Hidden; Ok 'Launching all clones...'; Start-Sleep 1 }
             2 {
                 if (-not $cfg.Clones.Count) { continue }
-                $i = Ask-Choice 'Which' $cfg.Clones 1 -AllowBack
-                if ($i) { Start-Clone $cfg $cfg.Clones[$i - 1]; Ok 'Opening...'; Start-Sleep 1 }
+                $i = Ask-Choice 'Which clone would you like to open' $cfg.Clones 1 -AllowBack
+                if ($i) { Start-Clone $cfg $cfg.Clones[$i - 1]; Ok "Launching $($cfg.FolderPrefix)$($cfg.Clones[$i - 1])..."; Start-Sleep 1 }
             }
             3 {
                 $n = Stop-CloneProcesses ($cfg.Root.TrimEnd('\') + '\' + $cfg.FolderPrefix)
-                Ok "Closed $n process(es)."; Pause-Key
+                Ok "Safely closed $n clone process(es). Personal apps were left untouched."; Pause-Key
             }
             4 {
-                Say '  Type a number of extra clones, or names separated by commas.' DarkGray
-                $x = Ask 'Add' '1'
+                Say '  How many extra clones to add? Type a number (e.g. 2) or comma-separated names.' DarkGray
+                $x = Ask 'Add clones' '1'
                 if ($x -match '^\d+$') {
                     $base = if ($cfg.BaseName) { $cfg.BaseName } else { 'system' }
                     $used = @($cfg.Clones | ForEach-Object { if ($_ -match ('^' + [regex]::Escape($base) + '(\d+)$')) { [int]$Matches[1] } })
@@ -717,23 +729,25 @@ function Start-LibraryMenu([string]$root) {
                     $new = @(0..([int]$x - 1) | ForEach-Object { "$base$($next + $_)" })
                 }
                 else { $new = @($x -split ',' | ForEach-Object { Get-SafeName $_ } | Where-Object { $_ -and $cfg.Clones -notcontains $_ } | Select-Object -Unique) }
-                if (-not $new.Count -or [int]("0$x" -replace '\D', '') -gt 100) { Warn 'Nothing to add.'; Pause-Key; continue }
+                if (-not $new.Count -or [int]("0$x" -replace '\D', '') -gt 100) { Warn 'No valid clone names provided.'; Pause-Key; continue }
                 $made = Build-Clones $cfg $new
-                Ok "$made clone(s) added."; Pause-Key
+                Ok "$made new clone(s) successfully added."; Pause-Key
             }
             5 {
                 if (-not $cfg.Clones.Count) { continue }
-                $i = Ask-Choice 'Remove which' $cfg.Clones 1 -AllowBack
+                $i = Ask-Choice 'Select which clone to permanently delete' $cfg.Clones 1 -AllowBack
                 if (-not $i) { continue }
                 $n = $cfg.Clones[$i - 1]
-                Warn "This permanently deletes '$($cfg.FolderPrefix)$n' - its login, chats cache and Downloads on this PC."
-                if (Ask-YesNo 'Delete it?' $false) { Remove-Clone $cfg $n; Ok 'Removed.' }
+                Warn "Warning: This permanently deletes '$($cfg.FolderPrefix)$n' along with its logins, sessions, and downloads."
+                if (Ask-YesNo 'Are you sure you want to delete this account?' $false) { Remove-Clone $cfg $n; Ok 'Clone removed successfully.' }
                 Pause-Key
             }
             6 { Start-Process explorer.exe -ArgumentList "`"$($cfg.Root)`"" }
             7 {
-                Warn "This permanently deletes ALL $($cfg.Clones.Count) clone(s) in $($cfg.Root), with their data and Downloads."
-                if ((Ask "Type DELETE to confirm") -ceq 'DELETE') {
+                Warn "Warning: This will permanently delete ALL $($cfg.Clones.Count) clone accounts in: $($cfg.Root)"
+                Say  '  All login sessions, caches, and downloaded files will be permanently erased.' Yellow
+                Say  '  Type DELETE in all capital letters to confirm:' DarkGray
+                if ((Ask "Confirmation") -ceq 'DELETE') {
                     foreach ($n in @($cfg.Clones)) { Remove-Clone $cfg $n }
                     foreach ($d in $cfg.ShortcutDirs) {
                         foreach ($l in "Open All", "Close All") { $p = Join-Path $d "$($cfg.AppName) - $l.lnk"; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } }
@@ -743,9 +757,9 @@ function Start-LibraryMenu([string]$root) {
                     }
                     if (-not (Get-ChildItem -LiteralPath $cfg.Root -Force)) { Remove-Item -LiteralPath $cfg.Root -Force }
                     Write-Log "REMOVE ALL '$($cfg.AppName)' at '$root'"
-                    Ok 'All clones removed.'; Pause-Key; return
+                    Ok 'All clones and associated shortcuts were removed.'; Pause-Key; return
                 }
-                Warn 'Not confirmed - nothing deleted.'; Pause-Key
+                Warn 'Deletion was not confirmed. Nothing was modified.'; Pause-Key
             }
         }
     }
@@ -785,7 +799,12 @@ while ($true) {
     try {
         Show-Header
         $libs = @(Get-KnownLibraries)
-        $m = Ask-Choice 'Choose' @('Create new clones', "Manage my clones$(if ($libs.Count) { "  ($($libs.Count) on this PC)" })", 'Help') 1
+        $mainChoices = @(
+            'Create New Clones    - Set up isolated accounts for an app, website, or executable',
+            "Manage My Clones     - View disk usage, running status, launch/close, or add accounts$(if ($libs.Count) { " ($($libs.Count) on this PC)" })",
+            'Documentation & Help - Learn how App Mirror works, data isolation, and compatibility'
+        )
+        $m = Ask-Choice 'Select an Option' $mainChoices 1
         switch ($m) {
             1 { Start-CreateWizard }
             2 { Start-ManageMenu }
